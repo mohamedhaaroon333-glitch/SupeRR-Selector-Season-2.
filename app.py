@@ -75,7 +75,16 @@ page = st.sidebar.radio(
      "Format Comparison", "Player Explorer", "Dataset Information"]
 )
 st.sidebar.divider()
-st.sidebar.success(f"{len(deliveries):,} pressure deliveries loaded")
+
+total_balls = len(deliveries)
+if "is_high_pressure" in deliveries.columns:
+    hp_balls = int(deliveries["is_high_pressure"].sum())
+elif "pressure_score" in deliveries.columns:
+    hp_balls = int((deliveries["pressure_score"] >= 2).sum())
+else:
+    hp_balls = total_balls
+
+st.sidebar.success(f"{total_balls:,} deliveries analysed ({hp_balls:,} high-pressure)")
 
 def top_bar(df, x, y, colors, title=None, height=450):
     fig = px.bar(
@@ -95,13 +104,12 @@ if page == "Executive Overview":
     total_players = rankings["Player"].nunique() if "Player" in rankings else 0
     total_batters = batters["striker_name"].nunique() if "striker_name" in batters else 0
     total_bowlers = bowlers["bowler_name"].nunique() if "bowler_name" in bowlers else 0
-    total_deliveries = len(deliveries)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("PLAYERS ANALYSED", f"{total_players:,}")
     c2.metric("UNIQUE BATTERS", f"{total_batters:,}")
     c3.metric("UNIQUE BOWLERS", f"{total_bowlers:,}")
-    c4.metric("PRESSURE DELIVERIES", f"{total_deliveries:,}")
+    c4.metric("HIGH-PRESSURE BALLS", f"{hp_balls:,}")
 
     st.divider()
     left, right = st.columns(2)
@@ -200,34 +208,84 @@ elif page == "Format Comparison":
     st.dataframe(bowler_format, use_container_width=True, hide_index=True)
 
 # ==========================================
-# PLAYER EXPLORER
+# PLAYER EXPLORER & SIDE-BY-SIDE COMPARISON
 # ==========================================
 elif page == "Player Explorer":
-    st.subheader("🔎 PLAYER EXPLORER")
+    st.subheader("🔎 PLAYER EXPLORER & HEAD-TO-HEAD COMPARISON")
 
     players = sorted(rankings["Player"].dropna().unique().tolist())
-    selected_player = st.selectbox("Search Player", players)
-    result = rankings[rankings["Player"] == selected_player]
 
-    if not result.empty:
-        row = result.iloc[0]
-        c1, c2, c3 = st.columns(3)
-        c1.metric("PLAYER", row["Player"])
-        c2.metric("PRESSURE SCORE", round(row["Score"], 2))
-        c3.metric("OVERALL RANK", int(row["Rank"]))
+    mode = st.radio("Select View Mode", ["Single Player Deep-Dive", "Side-by-Side Player Comparison"], horizontal=True)
+    st.divider()
 
-        st.divider()
-        st.markdown("### PLAYER PERFORMANCE DETAILS")
-        st.dataframe(result, use_container_width=True, hide_index=True)
+    if mode == "Single Player Deep-Dive":
+        selected_player = st.selectbox("Search Player", players)
+        result = rankings[rankings["Player"] == selected_player]
 
-        bat = batters[batters["striker_name"] == selected_player]
-        bowl = bowlers[bowlers["bowler_name"] == selected_player]
-        if not bat.empty:
-            st.markdown("### FORMAT-WISE BATTING PERFORMANCE")
-            st.dataframe(bat, use_container_width=True, hide_index=True)
-        if not bowl.empty:
-            st.markdown("### FORMAT-WISE BOWLING PERFORMANCE")
-            st.dataframe(bowl, use_container_width=True, hide_index=True)
+        if not result.empty:
+            row = result.iloc[0]
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("PLAYER", row["Player"])
+            c2.metric("ROLE", row["Role"])
+            c3.metric("PRESSURE SCORE", round(row["Score"], 2))
+            c4.metric("OVERALL RANK", int(row["Rank"]))
+
+            st.divider()
+            st.markdown("### OVERALL SUMMARY")
+            st.dataframe(result, use_container_width=True, hide_index=True)
+
+            bat = batters[batters["striker_name"] == selected_player]
+            bowl = bowlers[bowlers["bowler_name"] == selected_player]
+            if not bat.empty:
+                st.markdown("### FORMAT-WISE BATTING PERFORMANCE")
+                st.dataframe(bat, use_container_width=True, hide_index=True)
+            if not bowl.empty:
+                st.markdown("### FORMAT-WISE BOWLING PERFORMANCE")
+                st.dataframe(bowl, use_container_width=True, hide_index=True)
+
+    else:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            p1 = st.selectbox("Select Player A", players, index=0)
+        with col_b:
+            default_b = 1 if len(players) > 1 else 0
+            p2 = st.selectbox("Select Player B", players, index=default_b)
+
+        res1 = rankings[rankings["Player"] == p1]
+        res2 = rankings[rankings["Player"] == p2]
+
+        if not res1.empty and not res2.empty:
+            r1 = res1.iloc[0]
+            r2 = res2.iloc[0]
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"### 🅰️ {r1['Player']} ({r1['Role']})")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Score", round(r1["Score"], 2))
+                m2.metric("Rank", int(r1["Rank"]))
+                m3.metric("Pressure Balls", int(r1["Pressure_Balls"]))
+            with c2:
+                st.markdown(f"### 🅱️ {r2['Player']} ({r2['Role']})")
+                m4, m5, m6 = st.columns(3)
+                m4.metric("Score", round(r2["Score"], 2), delta=round(r2["Score"] - r1["Score"], 2))
+                m5.metric("Rank", int(r2["Rank"]))
+                m6.metric("Pressure Balls", int(r2["Pressure_Balls"]))
+
+            st.divider()
+            comp_df = pd.concat([res1, res2], ignore_index=True)
+            st.markdown("### HEAD-TO-HEAD OVERALL COMPARISON")
+            st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+            bat_comp = batters[batters["striker_name"].isin([p1, p2])]
+            if not bat_comp.empty:
+                st.markdown("### FORMAT-WISE BATTING COMPARISON")
+                st.dataframe(bat_comp, use_container_width=True, hide_index=True)
+
+            bowl_comp = bowlers[bowlers["bowler_name"].isin([p1, p2])]
+            if not bowl_comp.empty:
+                st.markdown("### FORMAT-WISE BOWLING COMPARISON")
+                st.dataframe(bowl_comp, use_container_width=True, hide_index=True)
 
 # ==========================================
 # DATASET INFORMATION
